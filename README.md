@@ -1,4 +1,7 @@
 # PhanUnusedVariable
+
+[![Build Status](https://travis-ci.org/phan/PhanUnusedVariable.svg?branch=master)](https://travis-ci.org/phan/PhanUnusedVariable)
+
 A plugin for phan/phan that tries to detect unused variables in class methods.
 
 ## Overview
@@ -14,4 +17,4 @@ $ composer install
 $ cd tests && sh test.sh
 ```
 
-Expected output is issues on variables $one to $nineteen and nothing else.
+A summary is printed at the bottom of the output comparing the actual output with the expected output.
