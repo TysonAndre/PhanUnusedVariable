@@ -290,8 +290,8 @@ final class UnusedVariableReferenceAnnotatorVisitor extends PluginAwarePostAnaly
     }
 
     /**
-     * @param Node[] $arg_list
-     * @return Node[] subset of those, preserving array indices.
+     * @param mixed[]|Node[] $arg_list
+     * @return array<int,Node> subset of those, preserving array indices.
      */
     private function extractArgumentsToAnalyze(array $arg_list) : array
     {
@@ -314,6 +314,7 @@ final class UnusedVariableReferenceAnnotatorVisitor extends PluginAwarePostAnaly
 
     /**
      * @param Node[] $unknown_argument_set a subset of the parameters of the call.
+     * @param array<int,Node> $unknown_argument_set
      * @return void
      */
     private function analyzeCallToMethodForReferences(
@@ -677,19 +678,24 @@ class UnusedVariableVisitor extends PluginAwarePostAnalysisVisitor {
             $this->tryVarUse($assignments, $dim, $instructionCount);
             $this->recurseToFindVarUse($assignments, $dim, $instructionCount);
         }
-        if ($expr->kind !== \ast\AST_VAR) {
-            // AST_STATIC_PROP or AST_PROP which we don't care about at the moment
-            if ($expr->kind === \ast\AST_DIM) {
-                $this->parseDim($assignments, $expr, $instructionCount);
+        if ($expr instanceof Node) {
+            if ($expr->kind !== \ast\AST_VAR) {
+                // AST_STATIC_PROP or AST_PROP which we don't care about at the moment
+                if ($expr->kind === \ast\AST_DIM) {
+                    $this->parseDim($assignments, $expr, $instructionCount);
+                }
+                return;
             }
-            return;
+            $name_node = $expr->children['name'];
+            if (\is_string($name_node)) {
+                $this->assignSingle(
+                    $assignments,
+                    $expr,
+                    $instructionCount,
+                    $name_node
+                );
+            }
         }
-        $this->assignSingle(
-            $assignments,
-            $expr,
-            $instructionCount,
-            $expr->children['name']
-        );
     }
 
     const LOOPS_SET = [
@@ -707,51 +713,62 @@ class UnusedVariableVisitor extends PluginAwarePostAnalysisVisitor {
         if (\ast\AST_FOREACH === $node->kind) {
             $value_node = $node->children['value'];
 
-            if (\ast\AST_REF === $value_node->kind ?? 0) {
-                $var_inner_node = $value_node->children['var'];
-                if ($var_inner_node->kind === \ast\AST_VAR) {
-                    $name = $var_inner_node->children['name'];
-                    if (is_string($name)) {
-                        $this->references[$name] = $assignments[$name] = [
-                            'line' => $node->lineno,
-                            'key' => $instructionCount,
-                            'param' => false,
-                            'reference' => true,
-                            'used' => true,  // This manipulates an array, so assume it's used.
-                        ];
+            if ($value_node instanceof Node) {  // probably impossible not to be a Node
+                if (\ast\AST_REF === $value_node->kind ?? 0) {
+                    $var_inner_node = $value_node->children['var'];
+                    if ($var_inner_node->kind === \ast\AST_VAR) {
+                        $name = $var_inner_node->children['name'];
+                        if (is_string($name)) {
+                            $this->references[$name] = $assignments[$name] = [
+                                'line' => $node->lineno,
+                                'key' => $instructionCount,
+                                'param' => false,
+                                'reference' => true,
+                                'used' => true,  // This manipulates an array, so assume it's used.
+                            ];
+                        }
+                    }
+                }
+                if (ast\AST_VAR === $value_node->kind ?? 0) {
+                    $value_name_node = $value_node->children['name'];
+                    if (is_string($value_name_node)) {
+                        $this->assignSingle(
+                            $assignments,
+                            $value_node,
+                            $instructionCount,
+                            $value_name_node
+                        );
                     }
                 }
             }
-            if (ast\AST_VAR === $value_node->kind ?? 0) {
-                $this->assignSingle(
-                    $assignments,
-                    $value_node,
-                    $instructionCount,
-                    $value_node->children['name']
-                );
-            }
             $key_node = $node->children['key'];
             if ($key_node instanceof Node && $key_node->kind === ast\AST_VAR) {
-                // PHP allows constructs such as `foreach ($arr as $o->keyProp => $o->valueProp) {`
-                $this->assignSingle(
-                    $assignments,
-                    $key_node,
-                    $instructionCount,
-                    $key_node->children['name']
-                );
+                $name_node = $key_node->children['name'];
+                if (is_string($name_node)) {
+                    // PHP allows constructs such as `foreach ($arr as $o->keyProp => $o->valueProp) {`
+                    $this->assignSingle(
+                        $assignments,
+                        $key_node,
+                        $instructionCount,
+                        $name_node
+                    );
+                }
             }
         }
 
         $this->parseCond($assignments, $node, $instructionCount);
         $this->parseExpr($assignments, $node, $instructionCount);
 
-        if (\ast\AST_FOR === $node->kind && isset($node->children['init'])) {
-            $this->parseStmts(
-                $assignments,
-                $node->children['init'],
-                $instructionCount,
-                self::RECORD_ASSIGNS
-            );
+        if (\ast\AST_FOR === $node->kind) {
+            $init_node = $node->children['init'];
+            if ($init_node instanceof Node) {
+                $this->parseStmts(
+                    $assignments,
+                    $init_node,
+                    $instructionCount,
+                    self::RECORD_ASSIGNS
+                );
+            }
         }
 
         $this->parseStmts(
